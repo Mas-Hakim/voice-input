@@ -222,38 +222,14 @@
         }
     }
 
-    // Словарь для автоматического определения языка
-    const languageDetectPatterns = {
-        'english': /^[a-zA-Z\s]+$/, // Только английские буквы
-        'mixed': /[a-zA-Z].*[а-яА-Я]|[а-яА-Я].*[a-zA-Z]/ // Смешанный текст
-    };
-
     // Определяет, есть ли в тексте английские слова
     function containsEnglish(text) {
-        return /[a-zA-Z]/.test(text) && text.length > 2;
+        return /[a-zA-Z]{2,}/.test(text); // минимум 2 английские буквы
     }
 
     // Определяет, есть ли в тексте русские слова
     function containsRussian(text) {
-        return /[а-яА-Я]/.test(text) && text.length > 2;
-    }
-
-    // Переключатель языка
-    function toggleLanguage() {
-        if (currentLanguage === 'ru-RU') {
-            currentLanguage = 'en-US';
-            updateStatus('🌐 Язык переключен на английский', 'active');
-            document.getElementById('lang-toggle').textContent = '🇷🇺 Русский';
-        } else {
-            currentLanguage = 'ru-RU';
-            updateStatus('🌐 Язык переключен на русский', 'active');
-            document.getElementById('lang-toggle').textContent = '🇺🇸 English';
-        }
-        
-        if (recognition) {
-            recognition.lang = currentLanguage;
-            console.log('Язык распознавания изменен на:', currentLanguage);
-        }
+        return /[а-яА-Я]{2,}/.test(text); // минимум 2 русские буквы
     }
 
     // Автоматическое определение языка текста
@@ -272,6 +248,32 @@
         }
     }
 
+    // Переключатель языка
+    function toggleLanguage() {
+        if (currentLanguage === 'ru-RU') {
+            currentLanguage = 'en-US';
+            updateStatus('🌐 Язык переключен на английский', 'active');
+            document.getElementById('lang-toggle').textContent = '🇷🇺 Русский';
+        } else {
+            currentLanguage = 'ru-RU';
+            updateStatus('🌐 Язык переключен на русский', 'active');
+            document.getElementById('lang-toggle').textContent = '🇺🇸 English';
+        }
+        
+        if (recognition && isListening) {
+            // Останавливаем и перезапускаем с новым языком
+            stopListening();
+            setTimeout(() => {
+                recognition.lang = currentLanguage;
+                startListening();
+            }, 300);
+        } else if (recognition) {
+            recognition.lang = currentLanguage;
+        }
+        
+        console.log('Язык распознавания изменен на:', currentLanguage);
+    }
+
     // Инициализация распознавания с мультиязычной поддержкой
     function initializeRecognition() {
         if (!SpeechRecognition) {
@@ -281,14 +283,11 @@
 
         recognition = new SpeechRecognition();
         
-        // НАСТРОЙКИ ДЛЯ ЛУЧШЕГО РАСПОЗНАВАНИЯ АНГЛИЙСКИХ СЛОВ В РУССКОЙ РЕЧИ
-        recognition.lang = 'ru-RU'; // Основной язык - русский
+        // НАСТРОЙКИ ДЛЯ ЛУЧШЕГО РАСПОЗНАВАНИЯ
+        recognition.lang = currentLanguage; // Начинаем с русского
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.maxAlternatives = 3; // Больше альтернатив для лучшего распознавания
-        
-        // Дополнительные настройки для улучшения качества
-        recognition.grammars = null; // Можно добавить грамматику позже
 
         recognition.onstart = () => {
             console.log('Распознавание начато. Язык:', currentLanguage);
@@ -298,7 +297,7 @@
         };
 
         recognition.onresult = (event) => {
-            console.log('Результат получен:', event.results);
+            console.log('Результат получен. Количество результатов:', event.results.length);
             
             let finalTranscript = '';
             let bestAlternative = '';
@@ -307,33 +306,34 @@
                 const result = event.results[i];
                 
                 // Ищем лучшую альтернативу среди всех вариантов
-                for (let j = 0; j < result.length; j++) {
-                    const alternative = result[j];
-                    
-                    if (result.isFinal) {
-                        // Выбираем альтернативу с наибольшей уверенностью
-                        if (!bestAlternative || alternative.confidence > 0.8) {
+                if (result.isFinal && result.length > 0) {
+                    for (let j = 0; j < result.length; j++) {
+                        const alternative = result[j];
+                        
+                        if (!bestAlternative || alternative.confidence > 0.5) {
                             bestAlternative = alternative.transcript;
                         }
                         
-                        // Логируем все альтернативы для отладки
-                        console.log(`Альтернатива ${j}: "${alternative.transcript}" (confidence: ${alternative.confidence})`);
+                        // Логируем альтернативы для отладки
+                        if (j === 0) {
+                            console.log(`Лучший вариант: "${alternative.transcript}" (confidence: ${alternative.confidence})`);
+                        }
                     }
-                }
-                
-                if (result.isFinal && bestAlternative) {
-                    finalTranscript = bestAlternative;
                     
-                    // Анализируем текст на наличие английских слов
-                    const detectedLang = detectLanguage(finalTranscript);
-                    
-                    if (detectedLang === 'mixed' || detectedLang === 'en') {
-                        console.log('Обнаружен английский текст:', finalTranscript);
+                    if (bestAlternative) {
+                        finalTranscript = bestAlternative;
                         
-                        // Если распознавание было на русском, но нашли английский -
-                        // возможно стоит переключить язык для следующей фразы
-                        if (currentLanguage === 'ru-RU' && containsEnglish(finalTranscript)) {
-                            updateStatus('🌐 Обнаружены английские слова', 'active');
+                        // Анализируем текст на наличие английских слов
+                        const detectedLang = detectLanguage(finalTranscript);
+                        
+                        if (detectedLang === 'mixed' || detectedLang === 'en') {
+                            console.log('Обнаружен английский текст:', finalTranscript);
+                            
+                            // Если распознавание было на русском, но нашли английский -
+                            // можно переключить язык для следующей фразы
+                            if (currentLanguage === 'ru-RU' && containsEnglish(finalTranscript)) {
+                                updateStatus('🌐 Обнаружены английские слова', 'active');
+                            }
                         }
                     }
                 }
@@ -344,7 +344,16 @@
                 const currentText = output.value;
                 
                 // Форматируем текст
-                const formattedText = formatText(finalTranscript, currentText);
+                let formattedText = '';
+                if (!currentText) {
+                    formattedText = finalTranscript;
+                } else {
+                    // Добавляем пробел, если предыдущий текст не заканчивается пробелом или пунктуацией
+                    const lastChar = currentText.charAt(currentText.length - 1);
+                    const needsSpace = ![' ', '.', '!', '?', ',', ';', ':'].includes(lastChar);
+                    formattedText = currentText + (needsSpace ? ' ' : '') + finalTranscript;
+                }
+                
                 output.value = formattedText;
                 
                 // Обновляем статус с информацией о языке
@@ -356,10 +365,12 @@
             }
             
             // Показываем промежуточные результаты
-            if (!finalTranscript && event.results[event.results.length - 1]) {
-                const interim = event.results[event.results.length - 1][0].transcript;
-                const langDetected = detectLanguage(interim);
-                updateStatus(`🎤 ...${interim.substring(Math.max(0, interim.length - 30))}`, 'active');
+            if (!finalTranscript && event.results.length > 0) {
+                const lastResult = event.results[event.results.length - 1];
+                if (lastResult.length > 0 && !lastResult.isFinal) {
+                    const interim = lastResult[0].transcript;
+                    updateStatus(`🎤 ...${interim.substring(Math.max(0, interim.length - 30))}`, 'active');
+                }
             }
         };
 
@@ -420,28 +431,6 @@
         updateStatus('✅ Система готова. Нажмите для записи');
     }
 
-    // Форматирование текста с учетом языка
-    function formatText(newText, existingText) {
-        if (!existingText) return newText;
-        
-        // Определяем язык нового текста
-        const newTextLang = detectLanguage(newText);
-        const lastChar = existingText.charAt(existingText.length - 1);
-        
-        // Добавляем правильные пробелы и пунктуацию
-        let separator = ' ';
-        
-        if (lastChar === '.' || lastChar === '!' || lastChar === '?') {
-            separator = ' ';
-        } else if (lastChar === ',') {
-            separator = ' ';
-        } else if (lastChar === ' ') {
-            separator = '';
-        }
-        
-        return existingText + separator + newText;
-    }
-
     // Управление записью
     function startListening() {
         if (!recognition) return;
@@ -499,39 +488,51 @@
         }
     };
 
-    // Создаем кнопку переключения языка (добавить в HTML)
+    // Создаем кнопку переключения языка
     function createLanguageToggle() {
-        const controls = document.querySelector('.controls');
-        if (!controls) return;
+        // Удаляем старую кнопку если существует
+        const oldToggle = document.getElementById('lang-toggle');
+        if (oldToggle) oldToggle.remove();
+        
+        const voiceToggle = document.getElementById('voice-input');
+        if (!voiceToggle || !voiceToggle.parentNode) return;
         
         const langButton = document.createElement('button');
         langButton.id = 'lang-toggle';
-        langButton.innerHTML = '🇺🇸 English';
+        langButton.textContent = '🇺🇸 English';
+        langButton.type = 'button';
+        
+        // Стили для кнопки
         langButton.style.cssText = `
             background: var(--deepseek-border);
             color: var(--deepseek-text);
             border: 1px solid var(--deepseek-border);
-            padding: 10px 20px;
+            padding: 12px 20px;
             border-radius: 8px;
             cursor: pointer;
             margin-top: 10px;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
             transition: all 0.2s ease;
             width: 100%;
+            font-family: inherit;
         `;
         
         langButton.onmouseover = function() {
             this.style.background = 'var(--deepseek-primary)';
             this.style.color = 'white';
+            this.style.borderColor = 'var(--deepseek-primary)';
         };
         
         langButton.onmouseout = function() {
             this.style.background = 'var(--deepseek-border)';
             this.style.color = 'var(--deepseek-text)';
+            this.style.borderColor = 'var(--deepseek-border)';
         };
         
         langButton.onclick = toggleLanguage;
-        controls.appendChild(langButton);
+        
+        // Вставляем после основной кнопки
+        voiceToggle.parentNode.insertBefore(langButton, voiceToggle.nextSibling);
     }
 
     function updateUI() {
