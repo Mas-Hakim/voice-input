@@ -170,9 +170,16 @@
             </ul>
             <small> версия: 0.3</small>
         </div>
+
         <textarea id="voice-output" placeholder="Результат голосового ввода появится здесь..."></textarea>
         <div class="status-indicator" id="status">Готов к работе</div>
-        <button id="voice-input">Voice Input OFF</button>
+        
+        <div class="controls">
+            <button id="voice-input">Voice Input OFF</button>
+            <!-- Этот div будет заполнен скриптом -->
+            <div class="language-controls"></div>
+        </div> 
+        
     </voice-input>
 
 <script>
@@ -180,8 +187,9 @@
     let recognition = null;
     let isListening = false;
     let isInitialized = false;
+    let currentLanguage = 'ru-RU';
 
-    // Запрашиваем доступ к микрофону при загрузке
+    // Запрашиваем доступ к микрофону
     async function requestMicrophoneAccess() {
         try {
             updateStatus('Запрос доступа к микрофону...', 'active');
@@ -214,65 +222,144 @@
         }
     }
 
-    // Инициализация распознавания
-    function initializeRecognition() {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) {
-            alert("Ваш браузер не поддерживает голосовой ввод.");
-            return; // Выходим, если не поддерживается
+    // Словарь для автоматического определения языка
+    const languageDetectPatterns = {
+        'english': /^[a-zA-Z\s]+$/, // Только английские буквы
+        'mixed': /[a-zA-Z].*[а-яА-Я]|[а-яА-Я].*[a-zA-Z]/ // Смешанный текст
+    };
+
+    // Определяет, есть ли в тексте английские слова
+    function containsEnglish(text) {
+        return /[a-zA-Z]/.test(text) && text.length > 2;
+    }
+
+    // Определяет, есть ли в тексте русские слова
+    function containsRussian(text) {
+        return /[а-яА-Я]/.test(text) && text.length > 2;
+    }
+
+    // Переключатель языка
+    function toggleLanguage() {
+        if (currentLanguage === 'ru-RU') {
+            currentLanguage = 'en-US';
+            updateStatus('🌐 Язык переключен на английский', 'active');
+            document.getElementById('lang-toggle').textContent = '🇷🇺 Русский';
+        } else {
+            currentLanguage = 'ru-RU';
+            updateStatus('🌐 Язык переключен на русский', 'active');
+            document.getElementById('lang-toggle').textContent = '🇺🇸 English';
         }
         
-        recognition = new SpeechRecognition(); 
+        if (recognition) {
+            recognition.lang = currentLanguage;
+            console.log('Язык распознавания изменен на:', currentLanguage);
+        }
+    }
+
+    // Автоматическое определение языка текста
+    function detectLanguage(text) {
+        const hasEnglish = containsEnglish(text);
+        const hasRussian = containsRussian(text);
         
-        // ОСНОВНЫЕ НАСТРОЙКИ
-        recognition.lang = 'ru-RU';
-        recognition.continuous = true; // Включаем непрерывное распознавание
-        recognition.interimResults = false; // Только конечные результаты
-        recognition.maxAlternatives = 1;
+        if (hasEnglish && hasRussian) {
+            return 'mixed'; // Смешанный текст
+        } else if (hasEnglish) {
+            return 'en'; // Английский
+        } else if (hasRussian) {
+            return 'ru'; // Русский
+        } else {
+            return 'unknown';
+        }
+    }
+
+    // Инициализация распознавания с мультиязычной поддержкой
+    function initializeRecognition() {
+        if (!SpeechRecognition) {
+            updateStatus('Браузер не поддерживает распознавание речи', 'error');
+            return;
+        }
+
+        recognition = new SpeechRecognition();
+        
+        // НАСТРОЙКИ ДЛЯ ЛУЧШЕГО РАСПОЗНАВАНИЯ АНГЛИЙСКИХ СЛОВ В РУССКОЙ РЕЧИ
+        recognition.lang = 'ru-RU'; // Основной язык - русский
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 3; // Больше альтернатив для лучшего распознавания
         
         // Дополнительные настройки для улучшения качества
-        recognition.interimResults = true; // Промежуточные результаты для лучшей обратной связи
+        recognition.grammars = null; // Можно добавить грамматику позже
 
         recognition.onstart = () => {
-            console.log('Распознавание начато');
+            console.log('Распознавание начато. Язык:', currentLanguage);
             isListening = true;
             updateUI();
-            updateStatus('🎤 Слушаю... Говорите сейчас', 'active');
+            updateStatus(`🎤 Слушаю... (${currentLanguage === 'ru-RU' ? 'Русский' : 'Английский'})`, 'active');
         };
 
         recognition.onresult = (event) => {
             console.log('Результат получен:', event.results);
             
             let finalTranscript = '';
-            let interimTranscript = '';
+            let bestAlternative = '';
             
             for (let i = event.resultIndex; i < event.results.length; i++) {
                 const result = event.results[i];
-                const transcript = result[0].transcript;
                 
-                if (result.isFinal) {
-                    finalTranscript += transcript;
-                    console.log('Финальный текст:', transcript);
-                } else {
-                    interimTranscript += transcript;
-                    console.log('Промежуточный текст:', transcript);
+                // Ищем лучшую альтернативу среди всех вариантов
+                for (let j = 0; j < result.length; j++) {
+                    const alternative = result[j];
+                    
+                    if (result.isFinal) {
+                        // Выбираем альтернативу с наибольшей уверенностью
+                        if (!bestAlternative || alternative.confidence > 0.8) {
+                            bestAlternative = alternative.transcript;
+                        }
+                        
+                        // Логируем все альтернативы для отладки
+                        console.log(`Альтернатива ${j}: "${alternative.transcript}" (confidence: ${alternative.confidence})`);
+                    }
+                }
+                
+                if (result.isFinal && bestAlternative) {
+                    finalTranscript = bestAlternative;
+                    
+                    // Анализируем текст на наличие английских слов
+                    const detectedLang = detectLanguage(finalTranscript);
+                    
+                    if (detectedLang === 'mixed' || detectedLang === 'en') {
+                        console.log('Обнаружен английский текст:', finalTranscript);
+                        
+                        // Если распознавание было на русском, но нашли английский -
+                        // возможно стоит переключить язык для следующей фразы
+                        if (currentLanguage === 'ru-RU' && containsEnglish(finalTranscript)) {
+                            updateStatus('🌐 Обнаружены английские слова', 'active');
+                        }
+                    }
                 }
             }
             
-            const output = document.getElementById('voice-output');
-            const currentText = output.value;
-            
-            // Добавляем только финальные результаты
             if (finalTranscript) {
-                const newText = currentText + (currentText && !currentText.endsWith(' ') ? ' ' : '') + finalTranscript.trim();
-                output.value = newText;
-                updateStatus('✅ Текст распознан', 'active');
+                const output = document.getElementById('voice-output');
+                const currentText = output.value;
+                
+                // Форматируем текст
+                const formattedText = formatText(finalTranscript, currentText);
+                output.value = formattedText;
+                
+                // Обновляем статус с информацией о языке
+                const langInfo = detectLanguage(finalTranscript);
+                const langEmoji = langInfo === 'mixed' ? '🌍' : (langInfo === 'en' ? '🇺🇸' : '🇷🇺');
+                updateStatus(`${langEmoji} Текст распознан (${langInfo})`, 'active');
+                
                 output.scrollTop = output.scrollHeight;
             }
             
-            // Показываем промежуточные результаты в статусе
-            if (interimTranscript && !finalTranscript) {
-                updateStatus('🎤 Распознаю: ' + interimTranscript, 'active');
+            // Показываем промежуточные результаты
+            if (!finalTranscript && event.results[event.results.length - 1]) {
+                const interim = event.results[event.results.length - 1][0].transcript;
+                const langDetected = detectLanguage(interim);
+                updateStatus(`🎤 ...${interim.substring(Math.max(0, interim.length - 30))}`, 'active');
             }
         };
 
@@ -280,7 +367,6 @@
             console.log('Ошибка распознавания:', event.error);
             
             if (event.error === 'no-speech') {
-                // Тишина - игнорируем
                 updateStatus('🎤 Говорите громче...', 'active');
                 return;
             }
@@ -298,7 +384,6 @@
             
             updateStatus('⚠️ Ошибка: ' + event.error, 'error');
             
-            // Пытаемся перезапустить при других ошибках
             if (isListening) {
                 setTimeout(() => {
                     if (recognition && isListening) {
@@ -313,14 +398,10 @@
         };
 
         recognition.onend = () => {
-            console.log('Распознавание завершено');
-            
             if (isListening) {
-                // Автоперезапуск с задержкой
                 setTimeout(() => {
                     if (recognition && isListening) {
                         try {
-                            console.log('Автоперезапуск...');
                             recognition.start();
                         } catch (e) {
                             console.log('Ошибка автоперезапуска:', e);
@@ -339,21 +420,38 @@
         updateStatus('✅ Система готова. Нажмите для записи');
     }
 
+    // Форматирование текста с учетом языка
+    function formatText(newText, existingText) {
+        if (!existingText) return newText;
+        
+        // Определяем язык нового текста
+        const newTextLang = detectLanguage(newText);
+        const lastChar = existingText.charAt(existingText.length - 1);
+        
+        // Добавляем правильные пробелы и пунктуацию
+        let separator = ' ';
+        
+        if (lastChar === '.' || lastChar === '!' || lastChar === '?') {
+            separator = ' ';
+        } else if (lastChar === ',') {
+            separator = ' ';
+        } else if (lastChar === ' ') {
+            separator = '';
+        }
+        
+        return existingText + separator + newText;
+    }
+
     // Управление записью
     function startListening() {
         if (!recognition) return;
         
-        if (!isInitialized) {
-            updateStatus('Инициализация...', 'active');
-        }
-        
         try {
             recognition.start();
-            console.log('Попытка запуска распознавания...');
+            console.log('Запуск распознавания на языке:', currentLanguage);
         } catch (error) {
             console.error('Ошибка запуска:', error);
             
-            // Если ошибка, пробуем переинициализировать
             if (error.toString().includes('start') || error.toString().includes('already')) {
                 stopListening();
                 setTimeout(() => {
@@ -381,7 +479,7 @@
         updateStatus('Запись остановлена');
     }
 
-    // Обработчик кнопки
+    // Обработчик основной кнопки
     document.getElementById('voice-input').onclick = async () => {
         if (!isInitialized) {
             const hasAccess = await requestMicrophoneAccess();
@@ -401,6 +499,41 @@
         }
     };
 
+    // Создаем кнопку переключения языка (добавить в HTML)
+    function createLanguageToggle() {
+        const controls = document.querySelector('.controls');
+        if (!controls) return;
+        
+        const langButton = document.createElement('button');
+        langButton.id = 'lang-toggle';
+        langButton.innerHTML = '🇺🇸 English';
+        langButton.style.cssText = `
+            background: var(--deepseek-border);
+            color: var(--deepseek-text);
+            border: 1px solid var(--deepseek-border);
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+            width: 100%;
+        `;
+        
+        langButton.onmouseover = function() {
+            this.style.background = 'var(--deepseek-primary)';
+            this.style.color = 'white';
+        };
+        
+        langButton.onmouseout = function() {
+            this.style.background = 'var(--deepseek-border)';
+            this.style.color = 'var(--deepseek-text)';
+        };
+        
+        langButton.onclick = toggleLanguage;
+        controls.appendChild(langButton);
+    }
+
     function updateUI() {
         const button = document.getElementById('voice-input');
         if (isListening) {
@@ -418,18 +551,14 @@
         statusEl.className = 'status-indicator ' + className;
     }
 
-    // Обработка Enter в текстовом поле
-    document.getElementById('voice-output').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            if (isListening) {
-                stopListening();
-            }
-        }
-    });
-
-    // Горячие клавиши
+    // Обработка горячих клавиш
     document.addEventListener('keydown', (e) => {
+        // Ctrl+L для переключения языка
+        if (e.ctrlKey && e.code === 'KeyL') {
+            e.preventDefault();
+            toggleLanguage();
+        }
+        
         // Space для старта/остановки
         if (e.code === 'Space' && e.ctrlKey) {
             e.preventDefault();
@@ -446,16 +575,10 @@
     window.addEventListener('DOMContentLoaded', () => {
         updateStatus('Загрузка системы...', 'active');
         
-        // Проверяем безопасный контекст
-        const isSecure = window.location.protocol === 'https:' || 
-                        window.location.hostname === 'localhost' || 
-                        window.location.hostname === '127.0.0.1';
+        // Создаем кнопку переключения языка
+        createLanguageToggle();
         
-        if (!isSecure) {
-            console.warn('Работа в небезопасном контексте. Микрофон может не работать.');
-        }
-        
-        // Инициализируем распознавание, но не запрашиваем микрофон до клика
+        // Инициализируем распознавание
         initializeRecognition();
         
         // Обновляем статус
@@ -464,8 +587,7 @@
 
     // Информация для отладки
     console.log('SpeechRecognition доступен:', !!SpeechRecognition);
-    console.log('Безопасный контекст:', window.isSecureContext);
-    console.log('Протокол:', window.location.protocol);
+    console.log('Поддерживаемые языки:', navigator.languages);
 </script>
     
 </body>
