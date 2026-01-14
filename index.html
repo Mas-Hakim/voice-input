@@ -210,12 +210,13 @@
 
     // Инициализация распознавания
     function initializeRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            updateStatus('Браузер не поддерживает распознавание речи', 'error');
-            return;
+            alert("Ваш браузер не поддерживает голосовой ввод. Используйте Chrome или Safari.");
+        } else {
+            const recognition = new SpeechRecognition();
+            // далее ваш код (lang, onresult и т.д.)
         }
-
-        recognition = new SpeechRecognition();
         
         // ОСНОВНЫЕ НАСТРОЙКИ
         recognition.lang = 'ru-RU';
