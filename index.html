@@ -137,6 +137,11 @@
             margin: 5px 0;
         }
         
+        .info-box small {
+            margin: 5px 0;
+            color: var(--deepseek-border);
+        }
+        
         @media (max-width: 480px) {
             voice-input {
                 padding: 16px;
@@ -163,6 +168,7 @@
                 <li>Или используйте localhost для разработки</li>
                 <li>Разрешите доступ к микрофону при запросе</li>
             </ul>
+            <small> версия: 0.3</small>
         </div>
         <textarea id="voice-output" placeholder="Результат голосового ввода появится здесь..."></textarea>
         <div class="status-indicator" id="status">Готов к работе</div>
