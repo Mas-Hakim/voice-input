@@ -169,256 +169,297 @@
         <button id="voice-input">Voice Input OFF</button>
     </voice-input>
 
-    <script>
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        let recognition = null;
-        let isListening = false;
+<script>
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let isListening = false;
+    let isInitialized = false;
 
-
-      navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(stream => {
-        console.log('Доступ получен');
-        // После этого можно запускать распознавание речи
-    })
-    .catch(err => {
-        console.error('Пользователь отклонил запрос или микрофон не найден', err);
-    });
-
-        
-        // Проверяем, работает ли страница по HTTPS или localhost
-        function isSecureContext() {
-            return window.isSecureContext || 
-                   window.location.protocol === 'https:' || 
-                   window.location.hostname === 'localhost' || 
-                   window.location.hostname === '127.0.0.1';
+    // Запрашиваем доступ к микрофону при загрузке
+    async function requestMicrophoneAccess() {
+        try {
+            updateStatus('Запрос доступа к микрофону...', 'active');
+            
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+            
+            console.log('Доступ к микрофону получен');
+            stream.getTracks().forEach(track => track.stop());
+            
+            updateStatus('Микрофон доступен. Нажмите для записи', 'active');
+            return true;
+            
+        } catch (error) {
+            console.error('Ошибка доступа к микрофону:', error);
+            
+            if (error.name === 'NotAllowedError') {
+                updateStatus('❌ Разрешите доступ к микрофону в настройках браузера', 'error');
+            } else {
+                updateStatus('Ошибка доступа к микрофону', 'error');
+            }
+            
+            document.getElementById('voice-input').disabled = true;
+            return false;
         }
+    }
+
+    // Инициализация распознавания
+    function initializeRecognition() {
+        if (!SpeechRecognition) {
+            updateStatus('Браузер не поддерживает распознавание речи', 'error');
+            return;
+        }
+
+        recognition = new SpeechRecognition();
         
-        // Инициализация при загрузке страницы
-        function initialize() {
-            if (!isSecureContext()) {
-                updateStatus('Требуется HTTPS или localhost для доступа к микрофону', 'error');
-                document.getElementById('voice-input').disabled = true;
-                return;
-            }
+        // ОСНОВНЫЕ НАСТРОЙКИ
+        recognition.lang = 'ru-RU';
+        recognition.continuous = true; // Включаем непрерывное распознавание
+        recognition.interimResults = false; // Только конечные результаты
+        recognition.maxAlternatives = 1;
+        
+        // Дополнительные настройки для улучшения качества
+        recognition.interimResults = true; // Промежуточные результаты для лучшей обратной связи
+
+        recognition.onstart = () => {
+            console.log('Распознавание начато');
+            isListening = true;
+            updateUI();
+            updateStatus('🎤 Слушаю... Говорите сейчас', 'active');
+        };
+
+        recognition.onresult = (event) => {
+            console.log('Результат получен:', event.results);
             
-            if (!SpeechRecognition) {
-                updateStatus('Браузер не поддерживает распознавание речи', 'error');
-                document.getElementById('voice-input').disabled = true;
-                return;
-            }
+            let finalTranscript = '';
+            let interimTranscript = '';
             
-            recognition = new SpeechRecognition();
-            recognition.lang = 'ru-RU';
-            recognition.continuous = false; // Изменено на false для Docker окружения
-            recognition.interimResults = true;
-            recognition.maxAlternatives = 1;
-            
-            recognition.onstart = () => {
-                isListening = true;
-                updateUI();
-                updateStatus('Слушаю... Говорите сейчас', 'active');
-            };
-            
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                const output = document.getElementById('voice-output');
-                output.value += (output.value ? ' ' : '') + transcript;
-                updateStatus('Текст распознан', 'active');
-                output.scrollTop = output.scrollHeight;
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                const transcript = result[0].transcript;
                 
-                // Автоматически перезапускаем после паузы
+                if (result.isFinal) {
+                    finalTranscript += transcript;
+                    console.log('Финальный текст:', transcript);
+                } else {
+                    interimTranscript += transcript;
+                    console.log('Промежуточный текст:', transcript);
+                }
+            }
+            
+            const output = document.getElementById('voice-output');
+            const currentText = output.value;
+            
+            // Добавляем только финальные результаты
+            if (finalTranscript) {
+                const newText = currentText + (currentText && !currentText.endsWith(' ') ? ' ' : '') + finalTranscript.trim();
+                output.value = newText;
+                updateStatus('✅ Текст распознан', 'active');
+                output.scrollTop = output.scrollHeight;
+            }
+            
+            // Показываем промежуточные результаты в статусе
+            if (interimTranscript && !finalTranscript) {
+                updateStatus('🎤 Распознаю: ' + interimTranscript, 'active');
+            }
+        };
+
+        recognition.onerror = (event) => {
+            console.log('Ошибка распознавания:', event.error);
+            
+            if (event.error === 'no-speech') {
+                // Тишина - игнорируем
+                updateStatus('🎤 Говорите громче...', 'active');
+                return;
+            }
+            
+            if (event.error === 'audio-capture') {
+                updateStatus('🎤 Проверьте микрофон...', 'active');
+                return;
+            }
+            
+            if (event.error === 'not-allowed') {
+                updateStatus('❌ Обновите разрешение для микрофона', 'error');
+                stopListening();
+                return;
+            }
+            
+            updateStatus('⚠️ Ошибка: ' + event.error, 'error');
+            
+            // Пытаемся перезапустить при других ошибках
+            if (isListening) {
                 setTimeout(() => {
-                    if (isListening && recognition) {
+                    if (recognition && isListening) {
                         try {
                             recognition.start();
-                        } catch(e) {
-                            console.log('Ожидание перезапуска...');
+                        } catch (e) {
+                            console.log('Ошибка перезапуска:', e);
                         }
                     }
-                }, 500);
-            };
-            
-            recognition.onerror = (event) => {
-                console.log('Ошибка распознавания:', event.error);
-                
-                // Игнорируем некоторые ошибки
-                if (event.error === 'no-speech' || event.error === 'audio-capture') {
-                    // Пытаемся перезапустить если все еще слушаем
-                    if (isListening) {
-                        setTimeout(() => {
-                            if (isListening && recognition) {
-                                try {
-                                    recognition.start();
-                                } catch(e) {
-                                    // Игнорируем ошибки перезапуска
-                                }
-                            }
-                        }, 1000);
-                    }
-                    return;
-                }
-                
-                isListening = false;
-                updateUI();
-                
-                switch(event.error) {
-                    case 'not-allowed':
-                    case 'security-error':
-                        updateStatus('Разрешите доступ к микрофону в настройках браузера', 'error');
-                        break;
-                    case 'network':
-                        updateStatus('Ошибка сети', 'error');
-                        break;
-                    case 'service-not-allowed':
-                        updateStatus('Сервис распознавания недоступен', 'error');
-                        break;
-                    default:
-                        updateStatus('Ошибка: ' + event.error, 'error');
-                }
-            };
-            
-            recognition.onend = () => {
-                if (isListening) {
-                    // Пытаемся перезапустить если все еще хотим слушать
-                    setTimeout(() => {
-                        if (isListening && recognition) {
-                            try {
-                                recognition.start();
-                            } catch(e) {
-                                isListening = false;
-                                updateUI();
-                                updateStatus('Распознавание остановлено');
-                            }
-                        }
-                    }, 100);
-                } else {
-                    updateStatus('Готов к работе');
-                }
-            };
-            
-            updateStatus('Система готова. Нажмите для начала записи');
-        }
-        
-        // Обработчик кнопки
-        document.getElementById('voice-input').onclick = () => {
-            if (!recognition) {
-                updateStatus('Система не инициализирована', 'error');
-                return;
+                }, 1000);
             }
+        };
+
+        recognition.onend = () => {
+            console.log('Распознавание завершено');
             
             if (isListening) {
-                recognition.stop();
-                isListening = false;
-                updateUI();
-                updateStatus('Запись остановлена');
-            } else {
-                // Прямой запуск без дополнительных проверок для Docker
-                try {
-                    recognition.start();
-                } catch (error) {
-                    console.log('Ошибка при запуске:', error);
-                    updateStatus('Ошибка запуска. Попробуйте снова', 'error');
-                    
-                    // Пробуем переинициализировать
-                    if (recognition) {
+                // Автоперезапуск с задержкой
+                setTimeout(() => {
+                    if (recognition && isListening) {
                         try {
-                            recognition.stop();
-                        } catch(e) {}
-                    }
-                    
-                    // Создаем новый объект распознавания
-                    recognition = new SpeechRecognition();
-                    recognition.lang = 'ru-RU';
-                    recognition.continuous = false;
-                    recognition.interimResults = true;
-                    
-                    // Назначаем обработчики
-                    recognition.onstart = () => {
-                        isListening = true;
-                        updateUI();
-                        updateStatus('Слушаю... Говорите сейчас', 'active');
-                    };
-                    
-                    recognition.onresult = (event) => {
-                        const transcript = event.results[0][0].transcript;
-                        const output = document.getElementById('voice-output');
-                        output.value += (output.value ? ' ' : '') + transcript;
-                        updateStatus('Текст распознан', 'active');
-                        output.scrollTop = output.scrollHeight;
-                        
-                        setTimeout(() => {
-                            if (isListening && recognition) {
-                                try {
-                                    recognition.start();
-                                } catch(e) {}
-                            }
-                        }, 500);
-                    };
-                    
-                    recognition.onerror = (event) => {
-                        console.log('Ошибка:', event.error);
-                        if (event.error !== 'no-speech' && event.error !== 'audio-capture') {
+                            console.log('Автоперезапуск...');
+                            recognition.start();
+                        } catch (e) {
+                            console.log('Ошибка автоперезапуска:', e);
                             isListening = false;
                             updateUI();
-                            updateStatus('Ошибка: ' + event.error, 'error');
+                            updateStatus('Распознавание остановлено');
                         }
-                    };
-                    
-                    recognition.onend = () => {
-                        if (isListening) {
-                            setTimeout(() => {
-                                if (isListening && recognition) {
-                                    try {
-                                        recognition.start();
-                                    } catch(e) {}
-                                }
-                            }, 100);
-                        }
-                    };
-                    
-                    // Пробуем снова
-                    setTimeout(() => {
-                        try {
-                            recognition.start();
-                        } catch(e) {
-                            updateStatus('Не удалось запустить. Обновите страницу', 'error');
-                        }
-                    }, 300);
-                }
+                    }
+                }, 300);
+            } else {
+                updateStatus('Готов к работе');
             }
         };
         
-        function updateUI() {
-            const button = document.getElementById('voice-input');
-            if (isListening) {
-                button.textContent = 'Voice Input ON';
-                button.classList.add('listening');
+        isInitialized = true;
+        updateStatus('✅ Система готова. Нажмите для записи');
+    }
+
+    // Управление записью
+    function startListening() {
+        if (!recognition) return;
+        
+        if (!isInitialized) {
+            updateStatus('Инициализация...', 'active');
+        }
+        
+        try {
+            recognition.start();
+            console.log('Попытка запуска распознавания...');
+        } catch (error) {
+            console.error('Ошибка запуска:', error);
+            
+            // Если ошибка, пробуем переинициализировать
+            if (error.toString().includes('start') || error.toString().includes('already')) {
+                stopListening();
+                setTimeout(() => {
+                    initializeRecognition();
+                    setTimeout(startListening, 500);
+                }, 1000);
             } else {
-                button.textContent = 'Voice Input OFF';
-                button.classList.remove('listening');
+                updateStatus('❌ Не удалось начать запись', 'error');
+            }
+        }
+    }
+
+    function stopListening() {
+        isListening = false;
+        
+        if (recognition) {
+            try {
+                recognition.stop();
+            } catch (e) {
+                // Игнорируем ошибки остановки
             }
         }
         
-        function updateStatus(message, className = '') {
-            const statusEl = document.getElementById('status');
-            statusEl.textContent = message;
-            statusEl.className = 'status-indicator ' + className;
+        updateUI();
+        updateStatus('Запись остановлена');
+    }
+
+    // Обработчик кнопки
+    document.getElementById('voice-input').onclick = async () => {
+        if (!isInitialized) {
+            const hasAccess = await requestMicrophoneAccess();
+            if (hasAccess) {
+                initializeRecognition();
+                setTimeout(() => {
+                    startListening();
+                }, 300);
+            }
+            return;
+        }
+
+        if (isListening) {
+            stopListening();
+        } else {
+            startListening();
+        }
+    };
+
+    function updateUI() {
+        const button = document.getElementById('voice-input');
+        if (isListening) {
+            button.textContent = 'Voice Input ON';
+            button.classList.add('listening');
+        } else {
+            button.textContent = 'Voice Input OFF';
+            button.classList.remove('listening');
+        }
+    }
+
+    function updateStatus(message, className = '') {
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = message;
+        statusEl.className = 'status-indicator ' + className;
+    }
+
+    // Обработка Enter в текстовом поле
+    document.getElementById('voice-output').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            if (isListening) {
+                stopListening();
+            }
+        }
+    });
+
+    // Горячие клавиши
+    document.addEventListener('keydown', (e) => {
+        // Space для старта/остановки
+        if (e.code === 'Space' && e.ctrlKey) {
+            e.preventDefault();
+            document.getElementById('voice-input').click();
         }
         
-        // Обработка Enter в текстовом поле
-        document.getElementById('voice-output').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (isListening && recognition) {
-                    recognition.stop();
-                    isListening = false;
-                    updateUI();
-                }
-            }
-        });
+        // Esc для остановки
+        if (e.code === 'Escape' && isListening) {
+            stopListening();
+        }
+    });
+
+    // Инициализация при загрузке
+    window.addEventListener('DOMContentLoaded', () => {
+        updateStatus('Загрузка системы...', 'active');
         
-        // Запускаем инициализацию при загрузке
-        window.addEventListener('DOMContentLoaded', initialize);
-    </script>
+        // Проверяем безопасный контекст
+        const isSecure = window.location.protocol === 'https:' || 
+                        window.location.hostname === 'localhost' || 
+                        window.location.hostname === '127.0.0.1';
+        
+        if (!isSecure) {
+            console.warn('Работа в небезопасном контексте. Микрофон может не работать.');
+        }
+        
+        // Инициализируем распознавание, но не запрашиваем микрофон до клика
+        initializeRecognition();
+        
+        // Обновляем статус
+        updateStatus('Нажмите кнопку для начала записи');
+    });
+
+    // Информация для отладки
+    console.log('SpeechRecognition доступен:', !!SpeechRecognition);
+    console.log('Безопасный контекст:', window.isSecureContext);
+    console.log('Протокол:', window.location.protocol);
+</script>
+    
 </body>
 </html>
