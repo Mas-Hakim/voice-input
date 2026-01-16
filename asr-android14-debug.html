@@ -118,7 +118,10 @@ function detectEnv() {
             const m = ua.match(/Chrome\/(\d+)/);
             return m ? Number(m[1]) : null;
         })(),
-        isTargetBrowser: /Android 14/.test(ua) && /Chrome\/141\./.test(ua)
+        isTargetBrowser:
+    /Chrome\/141\./.test(ua) &&
+    /Mobile/.test(ua) &&
+    /Android/.test(ua)
     };
 }
 
