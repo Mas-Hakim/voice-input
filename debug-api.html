@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Web Speech API ASR Demo (Debug)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #0f1115;
+    color: #e6e6e6;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.container {
+    max-width: 900px;
+    margin: 30px auto;
+    padding: 20px;
+}
+
+h1 {
+    font-size: 20px;
+    margin-bottom: 14px;
+}
+
+.controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+button {
+    background: #1f2430;
+    color: #e6e6e6;
+    border: 1px solid #2f3545;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #2a3040;
+}
+
+textarea, pre {
+    width: 100%;
+    min-height: 200px;
+    background: #151821;
+    color: #f1f1f1;
+    border: 1px solid #2a2f3a;
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 14px;
+    line-height: 1.5;
+    resize: vertical;
+}
+
+pre {
+    white-space: pre-wrap;
+    overflow: auto;
+    font-size: 12px;
+    color: #9aa0aa;
+}
+
+.hidden {
+    display: none;
+}
+
+.status {
+    margin-top: 8px;
+    font-size: 13px;
+    color: #9aa0aa;
+}
+
+.asr-final-blink {
+    animation: asrBlink 0.22s ease-in-out;
+}
+
+@keyframes asrBlink {
+    0% { background-color: rgba(255, 230, 140, 0.35); }
+    100% { background-color: transparent; }
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+    <h1>Web Speech API — ASR Debug (Android Chrome)</h1>
+
+    <!-- Tabs -->
+    <div class="controls">
+        <button id="tab-asr">ASR</button>
+        <button id="tab-logs">Logs</button>
+        <button id="start">Start</button>
+        <button id="stop">Stop</button>
+        <button id="clear">Clear</button>
+    </div>
+
+    <!-- ASR view -->
+    <textarea id="asr" placeholder="Нажми Start и говори…"></textarea>
+
+    <!-- Logs view -->
+    <pre id="logs" class="hidden"></pre>
+
+    <div class="status" id="status">Idle</div>
+</div>
+
+<script>
+/* ================= Tab control ================= */
+
+const asrView  = document.getElementById("asr");
+const logsView = document.getElementById("logs");
+
+document.getElementById("tab-asr").onclick = () => {
+    asrView.classList.remove("hidden");
+    logsView.classList.add("hidden");
+};
+
+document.getElementById("tab-logs").onclick = () => {
+    asrView.classList.add("hidden");
+    logsView.classList.remove("hidden");
+};
+
+/* ================= ASR renderer ================= */
+
+function renderASRText(textarea, text, isFinal = false) {
+    if (!textarea || typeof text !== "string") return;
+
+    if (!textarea._asrState) {
+        textarea._asrState = {
+            partialText: "",
+            animationLock: false
+        };
+    }
+
+    const state = textarea._asrState;
+    if (state.animationLock) return;
+    state.animationLock = true;
+
+    const TYPE_DELAY = 18;
+    const ERASE_DELAY = 12;
+
+    const erase = (count, done) => {
+        let i = count;
+        const step = () => {
+            if (i-- <= 0) return done();
+            textarea.value = textarea.value.slice(0, -1);
+            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            setTimeout(step, ERASE_DELAY);
+        };
+        step();
+    };
+
+    const type = (str, done) => {
+        let i = 0;
+        const step = () => {
+            if (i >= str.length) return done();
+            textarea.value += str[i++];
+            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            setTimeout(step, TYPE_DELAY);
+        };
+        step();
+    };
+
+    const blinkFinal = () => {
+        textarea.classList.add("asr-final-blink");
+        setTimeout(() => textarea.classList.remove("asr-final-blink"), 220);
+    };
+
+    erase(state.partialText.length, () => {
+        type(text, () => {
+            if (isFinal) {
+                state.partialText = "";
+                blinkFinal();
+            } else {
+                state.partialText = text;
+            }
+            state.animationLock = false;
+        });
+    });
+}
+
+/* ================= Web Speech API ================= */
+
+const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (!SpeechRecognition) {
+    alert("Web Speech API не поддерживается этим браузером");
+}
+
+const rec = new SpeechRecognition();
+rec.lang = "ru-RU";
+rec.interimResults = true;
+rec.continuous = true;
+rec.maxAlternatives = 1;
+
+const status = document.getElementById("status");
+
+/* ---- Debug logger ---- */
+function logASREvent(event) {
+    const dump = {
+        timeStamp: event.timeStamp,
+        resultIndex: event.resultIndex,
+        resultsLength: event.results.length,
+        results: Array.from(event.results).map((res, i) => ({
+            index: i,
+            isFinal: res.isFinal,
+            alternatives: Array.from(res).map(a => ({
+                transcript: a.transcript,
+                confidence: a.confidence
+            }))
+        }))
+    };
+
+    logsView.textContent += JSON.stringify(dump, null, 2) + "\n\n";
+    logsView.scrollTop = logsView.scrollHeight;
+}
+
+/* ---- ASR events ---- */
+rec.onstart = () => status.textContent = "Listening…";
+rec.onerror = e => status.textContent = "Error: " + e.error;
+rec.onend   = () => status.textContent = "Stopped";
+
+rec.onresult = (event) => {
+    logASREvent(event); // ключевая диагностика Android Chrome
+
+    let interim = "";
+    let final = "";
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (res.isFinal) final += res[0].transcript + " ";
+        else interim += res[0].transcript;
+    }
+
+    if (interim) renderASRText(asrView, interim, false);
+    if (final)   renderASRText(asrView, final, true);
+};
+
+/* ================= Controls ================= */
+
+document.getElementById("start").onclick = () => rec.start();
+document.getElementById("stop").onclick  = () => rec.stop();
+
+document.getElementById("clear").onclick = () => {
+    asrView.value = "";
+    asrView._asrState = null;
+    logsView.textContent = "";
+};
+</script>
+</body>
+</html>
