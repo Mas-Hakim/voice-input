@@ -95,64 +95,83 @@ pre {
 </div>
 
 <script>
+/* ================= DOM ================= */
+
+const asrView = document.getElementById("asr");
+const logsView = document.getElementById("logs");
+const statusView = document.getElementById("status");
+
+const tabAsrBtn  = document.getElementById("tab-asr");
+const tabLogsBtn = document.getElementById("tab-logs");
+const startBtn   = document.getElementById("start");
+const stopBtn    = document.getElementById("stop");
+const clearBtn   = document.getElementById("clear");
+
 /* ================= ENV DETECT ================= */
 
-const env = {
-    ua: navigator.userAgent,
-    isAndroid: /Android 14/.test(navigator.userAgent),
-    isChrome141: /Chrome\/141\./.test(navigator.userAgent)
-};
+function detectEnv() {
+    const ua = navigator.userAgent;
+    return {
+        ua,
+        isAndroid14: /Android 14/.test(ua),
+        chromeVersion: (() => {
+            const m = ua.match(/Chrome\/(\d+)/);
+            return m ? Number(m[1]) : null;
+        })(),
+        isTargetBrowser: /Android 14/.test(ua) && /Chrome\/141\./.test(ua)
+    };
+}
 
-const logs = document.getElementById("logs");
-logs.textContent =
-    "ENV DETECT\n" +
-    JSON.stringify(env, null, 2) + "\n\n";
+const env = detectEnv();
+log("ENV", env);
 
 /* ================= TABS ================= */
 
-const asrView = document.getElementById("asr");
-
-tab-asr.onclick = () => {
+tabAsrBtn.onclick = () => {
     asrView.classList.remove("hidden");
-    logs.classList.add("hidden");
+    logsView.classList.add("hidden");
 };
 
-tab-logs.onclick = () => {
+tabLogsBtn.onclick = () => {
     asrView.classList.add("hidden");
-    logs.classList.remove("hidden");
+    logsView.classList.remove("hidden");
 };
+
+/* ================= LOGGER ================= */
+
+function log(label, obj) {
+    logsView.textContent +=
+        `[${label}]\n` +
+        JSON.stringify(obj, null, 2) +
+        "\n\n";
+    logsView.scrollTop = logsView.scrollHeight;
+}
 
 /* ================= TYPEWRITER ================= */
 
 function typewriter(textarea, text, moveCaret) {
-    const TYPE_DELAY = 18;
+    const DELAY = 16;
     let i = 0;
 
-    const step = () => {
-        if (i >= text.length) {
-            if (moveCaret) {
-                textarea.classList.add("asr-final-blink");
-                setTimeout(() =>
-                    textarea.classList.remove("asr-final-blink"), 220);
-            }
-            return;
-        }
-
+    function step() {
+        if (i >= text.length) return;
         textarea.value += text[i++];
         if (moveCaret) {
-            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+            textarea.selectionStart =
+            textarea.selectionEnd = textarea.value.length;
         }
-        setTimeout(step, TYPE_DELAY);
-    };
+        setTimeout(step, DELAY);
+    }
     step();
 }
 
 /* ================= WEB SPEECH ================= */
 
-const SR =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
-
-if (!SR) alert("SpeechRecognition not supported");
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) {
+    log("ERROR", "SpeechRecognition not supported");
+    alert("SpeechRecognition not supported");
+}
 
 const rec = new SR();
 rec.lang = "ru-RU";
@@ -162,25 +181,27 @@ rec.maxAlternatives = 1;
 
 let lastFinalIndex = -1;
 
-function logEvent(e) {
-    logs.textContent += JSON.stringify(e, null, 2) + "\n\n";
-    logs.scrollTop = logs.scrollHeight;
-}
-
 rec.onstart = () => {
-    status.textContent = "Listening…";
+    statusView.textContent = "Listening…";
     lastFinalIndex = -1;
+    log("ASR", "start");
 };
 
-rec.onend = () => status.textContent = "Stopped";
-rec.onerror = e => status.textContent = "Error: " + e.error;
+rec.onend = () => {
+    statusView.textContent = "Stopped";
+    log("ASR", "end");
+};
+
+rec.onerror = e => {
+    statusView.textContent = "Error: " + e.error;
+    log("ERROR", e);
+};
 
 rec.onresult = (event) => {
 
-    logEvent({
+    log("RAW_EVENT", {
         resultIndex: event.resultIndex,
-        resultsLength: event.results.length,
-        results: Array.from(event.results).map((r,i)=>({
+        results: Array.from(event.results).map((r, i) => ({
             i,
             isFinal: r.isFinal,
             transcript: r[0]?.transcript,
@@ -214,13 +235,14 @@ rec.onresult = (event) => {
 
 /* ================= CONTROLS ================= */
 
-start.onclick = () => rec.start();
-stop.onclick  = () => rec.stop();
+startBtn.onclick = () => rec.start();
+stopBtn.onclick  = () => rec.stop();
 
-clear.onclick = () => {
+clearBtn.onclick = () => {
     asrView.value = "";
-    logs.textContent = "";
+    logsView.textContent = "";
 };
 </script>
+
 </body>
 </html>
