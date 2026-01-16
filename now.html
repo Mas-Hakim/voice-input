@@ -2,9 +2,8 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>ASR Chrome 141 Mobile Debug</title>
+<title>ASR Chrome 141 Mobile Simple</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <style>
 body {
     margin: 0;
@@ -12,19 +11,16 @@ body {
     color: #e6e6e6;
     font-family: system-ui, sans-serif;
 }
-
 .container {
     max-width: 900px;
     margin: 20px auto;
     padding: 20px;
 }
-
 .controls {
     display: flex;
     gap: 8px;
     margin-bottom: 10px;
 }
-
 button {
     background: #1f2430;
     color: #fff;
@@ -32,7 +28,6 @@ button {
     border-radius: 6px;
     padding: 8px 14px;
 }
-
 textarea, pre {
     width: 100%;
     min-height: 180px;
@@ -43,16 +38,13 @@ textarea, pre {
     padding: 12px;
     font-size: 14px;
 }
-
 pre {
     font-size: 12px;
     white-space: pre-wrap;
     overflow: auto;
     color: #9aa0aa;
 }
-
 .hidden { display: none; }
-
 .status {
     margin-top: 8px;
     font-size: 12px;
@@ -60,11 +52,9 @@ pre {
 }
 </style>
 </head>
-
 <body>
-<div class="container">
-    <h3>ASR — Chrome 141 Mobile</h3>
 
+<div class="container">
     <div class="controls">
         <button id="tab-asr">ASR</button>
         <button id="tab-logs">Logs</button>
@@ -75,85 +65,53 @@ pre {
 
     <textarea id="asr"></textarea>
     <pre id="logs" class="hidden"></pre>
-
     <div class="status" id="status">Idle</div>
 </div>
 
 <script>
 /* ================= DOM ================= */
+const asr = document.getElementById("asr");
+const logs = document.getElementById("logs");
+const status = document.getElementById("status");
 
-const asrView = document.getElementById("asr");
-const logsView = document.getElementById("logs");
-const statusView = document.getElementById("status");
+document.getElementById("tab-asr").onclick  = () => { asr.classList.remove("hidden"); logs.classList.add("hidden"); };
+document.getElementById("tab-logs").onclick = () => { asr.classList.add("hidden"); logs.classList.remove("hidden"); };
 
-const tabAsrBtn  = document.getElementById("tab-asr");
-const tabLogsBtn = document.getElementById("tab-logs");
-const startBtn   = document.getElementById("start");
-const stopBtn    = document.getElementById("stop");
-const clearBtn   = document.getElementById("clear");
-
-/* ================= TABS ================= */
-
-tabAsrBtn.onclick = () => {
-    asrView.classList.remove("hidden");
-    logsView.classList.add("hidden");
-};
-
-tabLogsBtn.onclick = () => {
-    asrView.classList.add("hidden");
-    logsView.classList.remove("hidden");
-};
-
-/* ================= LOGGER ================= */
-
+/* ================= LOG ================= */
 function log(label, data) {
-    logsView.textContent +=
-        `[${label}]\n` +
-        JSON.stringify(data, null, 2) +
-        "\n\n";
-    logsView.scrollTop = logsView.scrollHeight;
+    logs.textContent += `[${label}]\n${JSON.stringify(data, null, 2)}\n\n`;
+    logs.scrollTop = logs.scrollHeight;
 }
-
-/* ================= ENV ================= */
 
 log("ENV", {
     ua: navigator.userAgent,
-    isChrome141Mobile:
+    isChromeMobile141:
         /Chrome\/141\./.test(navigator.userAgent) &&
         /Mobile/.test(navigator.userAgent) &&
         /Android/.test(navigator.userAgent)
 });
 
 /* ================= TYPEWRITER ================= */
+let interimLength = 0;
 
-let currentInterim = "";
-let lastFinalText = "";
-
-function typewriterOverwrite(textarea, newText, moveCaret) {
-    const ERASE_DELAY = 8;
-    const TYPE_DELAY = 16;
-
-    let eraseCount = currentInterim.length;
+function typewriterOverwrite(textarea, text) {
+    const ERASE_DELAY = 6;
+    const TYPE_DELAY  = 14;
+    let erase = interimLength;
     let i = 0;
 
     function eraseStep() {
-        if (eraseCount-- <= 0) return typeStep();
+        if (erase-- <= 0) return typeStep();
         textarea.value = textarea.value.slice(0, -1);
         setTimeout(eraseStep, ERASE_DELAY);
     }
 
     function typeStep() {
-        if (i >= newText.length) {
-            if (moveCaret) {
-                textarea.selectionStart =
-                textarea.selectionEnd = textarea.value.length;
-                currentInterim = "";
-            } else {
-                currentInterim = newText;
-            }
+        if (i >= text.length) {
+            interimLength = text.length;
             return;
         }
-        textarea.value += newText[i++];
+        textarea.value += text[i++];
         setTimeout(typeStep, TYPE_DELAY);
     }
 
@@ -161,7 +119,6 @@ function typewriterOverwrite(textarea, newText, moveCaret) {
 }
 
 /* ================= WEB SPEECH ================= */
-
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 if (!SR) alert("SpeechRecognition not supported");
 
@@ -171,66 +128,43 @@ rec.interimResults = true;
 rec.continuous = true;
 rec.maxAlternatives = 1;
 
-rec.onstart = () => {
-    statusView.textContent = "Listening…";
-    log("ASR", "start");
-};
-
-rec.onend = () => {
-    statusView.textContent = "Stopped";
-    log("ASR", "end");
-};
-
-rec.onerror = e => {
-    statusView.textContent = "Error";
-    log("ERROR", e);
-};
+rec.onstart = () => status.textContent = "Listening…";
+rec.onend   = () => status.textContent = "Stopped";
+rec.onerror = e => log("ERROR", e);
 
 rec.onresult = (event) => {
 
-    log("RAW_EVENT", {
-        resultIndex: event.resultIndex,
-        results: Array.from(event.results).map((r, i) => ({
-            i,
-            transcript: r[0]?.transcript,
-            confidence: r[0]?.confidence
-        }))
-    });
+    const idx = event.results.length - 1;
+    const alt = event.results[idx][0];
+    if (!alt) return;
 
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    const text = alt.transcript?.trim();
+    const confidence = alt.confidence ?? 0;
+    if (!text) return;
 
-        const alt = event.results[i][0];
-        if (!alt) continue;
+    log("RESULT", { index: idx, text, confidence });
 
-        const text = alt.transcript?.trim();
-        const confidence = alt.confidence ?? 0;
-
-        if (!text) continue;
-
-        if (confidence === 0) {
-            // INTERIM
-            typewriterOverwrite(asrView, text, false);
-        } else {
-            // FINAL
-            if (text === lastFinalText) continue;
-            typewriterOverwrite(asrView, text + " ", true);
-            lastFinalText = text;
-        }
+    if (confidence === 0) {
+        // INTERIM — всегда в одно место, без движения каретки
+        typewriterOverwrite(asr, text);
+    } else {
+        // FINAL — допечатываем и ТОЛЬКО ПОСЛЕ этого двигаем каретку
+        typewriterOverwrite(asr, text + " ");
+        setTimeout(() => {
+            asr.selectionStart = asr.selectionEnd = asr.value.length;
+            interimLength = 0;
+        }, 20);
     }
 };
 
 /* ================= CONTROLS ================= */
-
-startBtn.onclick = () => rec.start();
-stopBtn.onclick  = () => rec.stop();
-
-clearBtn.onclick = () => {
-    asrView.value = "";
-    logsView.textContent = "";
-    currentInterim = "";
-    lastFinalText = "";
+document.getElementById("start").onclick = () => rec.start();
+document.getElementById("stop").onclick  = () => rec.stop();
+document.getElementById("clear").onclick = () => {
+    asr.value = "";
+    logs.textContent = "";
+    interimLength = 0;
 };
-</script>
+</script>   
 </body>
-          
 </html>
