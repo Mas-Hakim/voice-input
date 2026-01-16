@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>ASR Android 14 Debug</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body {
+    margin: 0;
+    padding: 0;
+    background: #0f1115;
+    color: #e6e6e6;
+    font-family: system-ui, sans-serif;
+}
+
+.container {
+    max-width: 900px;
+    margin: 20px auto;
+    padding: 20px;
+}
+
+button {
+    background: #1f2430;
+    color: #fff;
+    border: 1px solid #2f3545;
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #2a3040;
+}
+
+.controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+textarea, pre {
+    width: 100%;
+    min-height: 180px;
+    background: #151821;
+    color: #f1f1f1;
+    border: 1px solid #2a2f3a;
+    border-radius: 8px;
+    padding: 12px;
+    font-size: 14px;
+}
+
+pre {
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow: auto;
+    color: #9aa0aa;
+}
+
+.hidden { display: none; }
+
+.status {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #9aa0aa;
+}
+
+.asr-final-blink {
+    animation: blink 0.22s ease-in-out;
+}
+
+@keyframes blink {
+    0% { background: rgba(255,230,140,.35); }
+    100% { background: transparent; }
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+    <h3>ASR Android 14 / Chrome 141 — Debug</h3>
+
+    <div class="controls">
+        <button id="tab-asr">ASR</button>
+        <button id="tab-logs">Logs</button>
+        <button id="start">Start</button>
+        <button id="stop">Stop</button>
+        <button id="clear">Clear</button>
+    </div>
+
+    <textarea id="asr"></textarea>
+    <pre id="logs" class="hidden"></pre>
+
+    <div class="status" id="status">Idle</div>
+</div>
+
+<script>
+/* ================= ENV DETECT ================= */
+
+const env = {
+    ua: navigator.userAgent,
+    isAndroid: /Android 14/.test(navigator.userAgent),
+    isChrome141: /Chrome\/141\./.test(navigator.userAgent)
+};
+
+const logs = document.getElementById("logs");
+logs.textContent =
+    "ENV DETECT\n" +
+    JSON.stringify(env, null, 2) + "\n\n";
+
+/* ================= TABS ================= */
+
+const asrView = document.getElementById("asr");
+
+tab-asr.onclick = () => {
+    asrView.classList.remove("hidden");
+    logs.classList.add("hidden");
+};
+
+tab-logs.onclick = () => {
+    asrView.classList.add("hidden");
+    logs.classList.remove("hidden");
+};
+
+/* ================= TYPEWRITER ================= */
+
+function typewriter(textarea, text, moveCaret) {
+    const TYPE_DELAY = 18;
+    let i = 0;
+
+    const step = () => {
+        if (i >= text.length) {
+            if (moveCaret) {
+                textarea.classList.add("asr-final-blink");
+                setTimeout(() =>
+                    textarea.classList.remove("asr-final-blink"), 220);
+            }
+            return;
+        }
+
+        textarea.value += text[i++];
+        if (moveCaret) {
+            textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+        }
+        setTimeout(step, TYPE_DELAY);
+    };
+    step();
+}
+
+/* ================= WEB SPEECH ================= */
+
+const SR =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+if (!SR) alert("SpeechRecognition not supported");
+
+const rec = new SR();
+rec.lang = "ru-RU";
+rec.interimResults = true;
+rec.continuous = true;
+rec.maxAlternatives = 1;
+
+let lastFinalIndex = -1;
+
+function logEvent(e) {
+    logs.textContent += JSON.stringify(e, null, 2) + "\n\n";
+    logs.scrollTop = logs.scrollHeight;
+}
+
+rec.onstart = () => {
+    status.textContent = "Listening…";
+    lastFinalIndex = -1;
+};
+
+rec.onend = () => status.textContent = "Stopped";
+rec.onerror = e => status.textContent = "Error: " + e.error;
+
+rec.onresult = (event) => {
+
+    logEvent({
+        resultIndex: event.resultIndex,
+        resultsLength: event.results.length,
+        results: Array.from(event.results).map((r,i)=>({
+            i,
+            isFinal: r.isFinal,
+            transcript: r[0]?.transcript,
+            confidence: r[0]?.confidence
+        }))
+    });
+
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+
+        if (i <= lastFinalIndex) continue;
+
+        const res = event.results[i];
+        if (res.isFinal !== true) continue;
+
+        const alt = res[0];
+        const text = alt.transcript?.trim();
+        const confidence = alt.confidence ?? 0;
+
+        if (!text) continue;
+
+        if (confidence === 0) {
+            // INTERIM
+            typewriter(asrView, text + " ", false);
+        } else {
+            // FINAL
+            typewriter(asrView, text + " ", true);
+            lastFinalIndex = i;
+        }
+    }
+};
+
+/* ================= CONTROLS ================= */
+
+start.onclick = () => rec.start();
+stop.onclick  = () => rec.stop();
+
+clear.onclick = () => {
+    asrView.value = "";
+    logs.textContent = "";
+};
+</script>
+</body>
+</html>
