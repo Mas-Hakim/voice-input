@@ -94,11 +94,43 @@ log("ENV", {
 /* ================= TYPEWRITER ================= */
 let interimLength = 0;
 
+/*
+  Блокировка и очередь:
+  - isAnimating: указывает, идёт ли сейчас анимация печати/стирания
+  - pendingText: если во время анимации пришёл новый текст, он здесь хранится и запустится после завершения
+*/
+let isAnimating = false;
+let pendingText = null;
+
 function typewriterOverwrite(textarea, text) {
     const ERASE_DELAY = 6;
     const TYPE_DELAY  = 14;
+
+    // Если уже анимируем — запоминаем последний текст и выйдем
+    if (isAnimating) {
+        pendingText = text;
+        return;
+    }
+
+    isAnimating = true;
+    textarea.disabled = true; // блокируем ввод во время анимации
+
     let erase = interimLength;
     let i = 0;
+
+    function finish() {
+        interimLength = text.length;
+        isAnimating = false;
+        textarea.disabled = false; // разблокируем после окончания
+
+        // Если был отложенный текст — запустим его с небольшой задержкой,
+        // чтобы дать браузеру отрисовать разблокировку и избежать моментальных пересечений
+        if (pendingText !== null) {
+            const next = pendingText;
+            pendingText = null;
+            setTimeout(() => typewriterOverwrite(textarea, next), 50);
+        }
+    }
 
     function eraseStep() {
         if (erase-- <= 0) return typeStep();
@@ -108,7 +140,7 @@ function typewriterOverwrite(textarea, text) {
 
     function typeStep() {
         if (i >= text.length) {
-            interimLength = text.length;
+            finish();
             return;
         }
         textarea.value += text[i++];
@@ -164,8 +196,8 @@ document.getElementById("clear").onclick = () => {
     asr.value = "";
     logs.textContent = "";
     interimLength = 0;
+    pendingText = null; // отменим отложенные записи, если были
 };
 </script>
 </body>
 </html>
-
