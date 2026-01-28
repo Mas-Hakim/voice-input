@@ -92,58 +92,85 @@ log("ENV", {
 });
 
 /* ================= TYPEWRITER ================= */
-let interimLength = 0;
-
 /*
-  Блокировка и очередь:
-  - isAnimating: указывает, идёт ли сейчас анимация печати/стирания
-  - pendingText: если во время анимации пришёл новый текст, он здесь хранится и запустится после завершения
+  Мы теперь поддерживаем:
+  - interimStart: позиция в textarea, с которой показывается текущий interim-фрагмент
+  - interimLength: длина этого interim-фрагмента
+  - isAnimating: чтобы не смешивать параллельные анимации
+  - pendingText: если приходит новый текст во время анимации — он ставится в очередь
 */
+let interimStart = null;
+let interimLength = 0;
 let isAnimating = false;
 let pendingText = null;
 
-function typewriterOverwrite(textarea, text) {
+function typewriterOverwrite(textarea, text, opts = {}) {
     const ERASE_DELAY = 6;
     const TYPE_DELAY  = 14;
 
-    // Если уже анимируем — запоминаем последний текст и выйдем
+    // Если уже анимируем — положим в pending (заменяем предыдущий pending — хотим последний текст)
     if (isAnimating) {
-        pendingText = text;
+        pendingText = { text, opts };
         return;
     }
 
     isAnimating = true;
-    textarea.disabled = true; // блокируем ввод во время анимации
+    textarea.disabled = true;
 
-    let erase = interimLength;
-    let i = 0;
+    // Базовая позиция — либо текущий interimStart (если есть), либо текущая позиция каретки
+    const basePos = (interimLength > 0 && Number.isInteger(interimStart)) ? interimStart : Math.max(0, textarea.selectionStart || 0);
+
+    // Сколько символов нужно стереть перед набором — текущее interimLength (если оно относится к той позиции)
+    let currentEraseLen = (interimLength > 0 && interimStart === basePos) ? interimLength : 0;
+    let typeIndex = 0;
 
     function finish() {
-        interimLength = text.length;
-        isAnimating = false;
-        textarea.disabled = false; // разблокируем после окончания
+        if (opts.final) {
+            // Для final результата передвинем каретку за вставленный фрагмент и сбросим interim
+            const caretPos = Math.min(basePos + text.length, textarea.value.length);
+            textarea.selectionStart = textarea.selectionEnd = caretPos;
+            interimLength = 0;
+            interimStart = null;
+        } else {
+            // Для interim — сохраним позицию и длину
+            interimStart = basePos;
+            interimLength = text.length;
+            // Оставим каретку там, где пользователь сидел (не двигаем)
+        }
 
-        // Если был отложенный текст — запустим его с небольшой задержкой,
-        // чтобы дать браузеру отрисовать разблокировку и избежать моментальных пересечений
+        isAnimating = false;
+        textarea.disabled = false;
+
+        // Если что-то отложено — запустим следующий фрагмент чуть позже
         if (pendingText !== null) {
             const next = pendingText;
             pendingText = null;
-            setTimeout(() => typewriterOverwrite(textarea, next), 50);
+            setTimeout(() => typewriterOverwrite(textarea, next.text, next.opts), 30);
         }
     }
 
     function eraseStep() {
-        if (erase-- <= 0) return typeStep();
-        textarea.value = textarea.value.slice(0, -1);
+        if (currentEraseLen <= 0) return typeStep();
+
+        // Удаляем последний символ из промежуточного фрагмента (в позиции basePos)
+        const before = textarea.value.slice(0, basePos);
+        const after  = textarea.value.slice(basePos + currentEraseLen);
+        const keep   = textarea.value.slice(basePos, basePos + currentEraseLen - 1); // не обязательно, можно не использовать
+        textarea.value = before + textarea.value.slice(basePos, basePos + currentEraseLen - 1) + after;
+
+        currentEraseLen--;
         setTimeout(eraseStep, ERASE_DELAY);
     }
 
     function typeStep() {
-        if (i >= text.length) {
+        if (typeIndex >= text.length) {
             finish();
             return;
         }
-        textarea.value += text[i++];
+        // Вставляем символ в позицию basePos + typeIndex
+        const before = textarea.value.slice(0, basePos + typeIndex);
+        const after  = textarea.value.slice(basePos + typeIndex);
+        textarea.value = before + text[typeIndex++] + after;
         setTimeout(typeStep, TYPE_DELAY);
     }
 
@@ -160,7 +187,11 @@ rec.interimResults = true;
 rec.continuous = true;
 rec.maxAlternatives = 1;
 
-rec.onstart = () => status.textContent = "Listening…";
+rec.onstart = () => {
+    status.textContent = "Listening…";
+    // При старте можно оставить interimStart/length как есть — если они были, мы продолжим перезапись там.
+    // Если нужно всегда начинать от текущей каретки, можно сбросить interimLength = 0;
+};
 rec.onend   = () => status.textContent = "Stopped";
 rec.onerror = e => log("ERROR", e);
 
@@ -177,15 +208,12 @@ rec.onresult = (event) => {
     log("RESULT", { index: idx, text, confidence });
 
     if (confidence === 0) {
-        // INTERIM — всегда в одно место, без движения каретки
-        typewriterOverwrite(asr, text);
+        // INTERIM — всегда показываем в одном месте (в позиции interimStart или каретки)
+        typewriterOverwrite(asr, text, { final: false });
     } else {
-        // FINAL — допечатываем и ТОЛЬКО ПОСЛЕ этого двигаем каретку
-        typewriterOverwrite(asr, text + " ");
-        setTimeout(() => {
-            asr.selectionStart = asr.selectionEnd = asr.value.length;
-            interimLength = 0;
-        }, 20);
+        // FINAL — допечатываем и ПОСЛЕ этого двигаем каретку за вставленный текст
+        typewriterOverwrite(asr, text + " ", { final: true });
+        // Заметим: теперь finish() внутри typewriterOverwrite установит caret именно за вставленным фрагментом
     }
 };
 
@@ -196,7 +224,8 @@ document.getElementById("clear").onclick = () => {
     asr.value = "";
     logs.textContent = "";
     interimLength = 0;
-    pendingText = null; // отменим отложенные записи, если были
+    interimStart = null;
+    pendingText = null;
 };
 </script>
 </body>
